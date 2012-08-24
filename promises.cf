@@ -10,6 +10,7 @@ body common control
 
  inputs => { 
             "yale/library.cf", 
+            "yale/packagesClient.cf", 
            };
 
 }
