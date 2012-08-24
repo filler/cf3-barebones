@@ -9,10 +9,9 @@ body common control
  bundlesequence => { "main" };
 
  inputs => { 
-            "cfengine_stdlib.cf", 
+            "yale/library.cf", 
            };
 
- version => "Community Promises.cf 1.0.0";
 }
 
 ###############################################################################
