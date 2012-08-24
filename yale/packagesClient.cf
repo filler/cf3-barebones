@@ -1,0 +1,156 @@
+################################################################################
+#
+# Package Management.
+#
+# Handles yum repository configuration:
+#  /etc/yum.repos.d/rhel.repo
+#  /etc/yum.repos.d/yale.repo
+#  /etc/yum/pluginconf.d/rhnplugin.conf
+#
+# No package promises should go here - those belong in project-specific files/
+# bundles.
+#
+################################################################################
+
+bundle agent packagesClient {
+
+vars:
+
+  packagesClient::
+
+    # To do local testing on this bundle, set fileserver to localhost
+    # "fileserver" slist => { "localhost" };
+    "fileserver"   slist => { "@(var.fileserver)" };
+    "prefix"      string => "$(var.masterfiles)/dcsunix/packagesClient/pub";
+
+    "rh_release"  string => 
+      execresult("/bin/awk '{print $7}' /etc/redhat-release", "noshell");
+
+  # To turn on test repos, add the class to enable_testrepos in classes.cf
+  packagesClient.enable_testrepos::
+
+    "testrepos_enabled" string => "1";
+
+  packagesClient.!enable_testrepos::
+
+    "testrepos_enabled" string => "0";
+
+
+files:
+
+  packagesClient::
+
+    "/etc/yum.repos.d/rhel.repo.template"
+      copy_from     => copy_std("$(prefix)/etc/yum.repos.d/rhel.repo.template",
+        "@(fileserver)", "false", "timestamp"),
+      comment       => "Template file from which RH minor-release-specific yum
+        configs are generated",
+      perms         => mode_owner_group("0444", "root", "root"),
+      action        => actionsettings_fix_inform("inform");
+  
+    "/etc/yum.repos.d/yale.repo.template"
+      copy_from     => copy_std("$(prefix)/etc/yum.repos.d/yale.repo.template",
+        "@(fileserver)", "false", "timestamp"),
+      comment       => "Template file from which yum configs for Yale-maintained
+        repos are generated",
+      perms         => mode_owner_group("0444", "root", "root"),
+      action        => actionsettings_fix_inform("inform");
+  
+    "/etc/yum.repos.d/rhel.repo"
+      perms         => mode_owner_group("0444", "root", "root"),
+      create        => "true",
+      edit_line     => expand_variables("/etc/yum.repos.d/rhel.repo.template"),
+      # Using the full-featured body here because we need to empty the file
+      # client-side first.
+      edit_defaults => editsettings("timestamp", "true", "50K"),
+      action        => actionsettings_fix_inform("inform");
+  
+    "/etc/yum.repos.d/yale.repo"
+      perms         => mode_owner_group("0444", "root", "root"),
+      create        => "true",
+      edit_line     => expand_variables("/etc/yum.repos.d/yale.repo.template"),
+      # Using the full-featured body here because we need to empty the file
+      # client-side first.
+      edit_defaults => editsettings("timestamp", "true", "50K"),
+      action        => actionsettings_fix_inform("inform");
+
+    "/etc/yum.repos.d/mrg.repo"
+      copy_from     => copy_std("$(prefix)/etc/yum.repos.d/mrg.repo",
+        "@(fileserver)", "false", "timestamp"),
+      perms         => mode_owner_group("0444", "root", "root"),
+      action        => actionsettings_fix_inform("inform");
+
+    # Copy this out, disabled. Enable via yum_rpm_exact_enablerepo() 
+    "/etc/yum.repos.d/percona.repo"
+      copy_from     => copy_std("$(prefix)/etc/yum.repos.d/percona.repo",
+        "@(fileserver)", "false", "timestamp"),
+      perms         => mode_owner_group("0444", "root", "root"),
+      action        => actionsettings_fix_inform("inform");
+
+    # Tested on RHEL 5.5; needs to be tested on 6+
+    "/etc/yum/pluginconf.d/rhnplugin.conf"
+      copy_from     => copy_std("$(prefix)/etc/yum/pluginconf.d/rhnplugin.conf",
+        "@(fileserver)", "false", "timestamp"),
+      comment       => "Disable rhnplugin.  This file looks slightly different
+        between RHEL minor releases, but we think it's okay to stomp this with
+        a copy, since we just need the two lines that shut this off.",
+      perms         => mode_owner_group("0444", "root", "root"),
+      action        => actionsettings_fix_inform("inform");
+
+  # Disable Cfengine2-driven .repo files in favor of unified v3 name
+  # disable_file appends ".cf-disabled" to the filename and sets mode 000
+  packagesClient.redhat_s_5::
+
+    "/etc/yum.repos.d/redhat.repo"
+      rename => disable_file,
+      action => actionsettings_fix_inform("inform");
+
+  packagesClient.redhat_s_6::
+     
+    "/etc/yum.repos.d/rhel60.repo"
+      rename => disable_file,
+      action => actionsettings_fix_inform("inform");
+
+    "/etc/yum.repos.d/rhel61.repo"
+      rename => disable_file,
+      action => actionsettings_fix_inform("inform");
+
+  # Lets exclude the Oracle/Sun mysqld packages in yale repo
+  # These pkgs listing obsoletes for mysql lead to depsolving problems
+  #   - https://gist.github.com/983263
+  #
+  # Bug on file with Red Hat for better solution
+  #   - https://access.redhat.com/support/cases/00477118
+  #
+  # Also this BS means you have to own managing pattern and pattern-1
+  # when there is change via regex + DeleteLinesMatching.  Boo.
+  #
+  # Currently excluding
+  #     * mysql enterprise - obsoletes source mysql in rhel
+  #
+  # Finally we positive match classes which need pkgs which would trip on obsoletes
+  # such as php needing php-mysql needing mysql.
+  #
+  # This could be better, such as poz matching el5+ (yum.conf + exclude support?) 
+  # and up and neg matching IWDB, perconaServer, etc
+  # 
+  # This means we wouldnt havent to think about MonitorDB, etc during 2 => 3
+  packagesClient.(wordPressApp|drupal7|drupal7DB)::
+
+    # Nuke the old monolithic exclude line
+    "/etc/yum.conf"
+      edit_line     => delete_lines_that_match(
+      "exclude=MySQL-*-advanced-gpl*,Percona-*,percona-*,xtrabackup*" ),
+      edit_defaults => editsettings_std("timestamp"),
+      action        => actionsettings_fix_inform("inform"),
+      create        => "false";
+
+    # Add the new monolithic exclude line
+    "/etc/yum.conf"
+      edit_line     => append_if_no_such_line(
+      "exclude=MySQL-*-advanced-gpl*" ),
+      edit_defaults => editsettings_std("timestamp"),
+      action        => actionsettings_fix_inform("inform"),
+      create        => "false";
+
+}
